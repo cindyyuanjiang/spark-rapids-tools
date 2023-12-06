@@ -37,8 +37,12 @@ class AppInfoProviderMockTest(val maxInput: Double,
     val sparkVersion: Option[String],
     val rapidsJars: Seq[String],
     val distinctLocationPct: Double,
-    val redundantReadSize: Long) extends AppSummaryInfoBaseProvider {
+    val redundantReadSize: Long,
+    val meanInput: Double,
+    val meanShuffleRead: Double) extends AppSummaryInfoBaseProvider {
   override def getMaxInput: Double = maxInput
+  override def getMeanInput: Double = meanInput
+  override def getMeanShuffleRead: Double = meanShuffleRead
   override def getSpilledMetrics: Seq[Long] = spilledMetrics
   override def getJvmGCFractions: Seq[Double] = jvmGCFractions
   override def getProperty(propKey: String): Option[String] = propsFromLog.get(propKey)
@@ -123,9 +127,11 @@ class AutoTunerSuite extends FunSuite with BeforeAndAfterEach with Logging {
       sparkVersion: Option[String],
       rapidsJars: Seq[String] = Seq(),
       distinctLocationPct: Double = 0.0,
-      redundantReadSize: Long = 0): AppSummaryInfoBaseProvider = {
+      redundantReadSize: Long = 0,
+      meanInput: Double = 0.0,
+      meanShuffleRead: Double = 0.0): AppSummaryInfoBaseProvider = {
     new AppInfoProviderMockTest(maxInput, spilledMetrics, jvmGCFractions, propsFromLog,
-      sparkVersion, rapidsJars, distinctLocationPct, redundantReadSize)
+      sparkVersion, rapidsJars, distinctLocationPct, redundantReadSize, meanInput, meanShuffleRead)
   }
 
   test("verify 3.2.0+ auto conf setting") {
