@@ -47,7 +47,13 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
   def expectedQualLoc(dirName: String): String = s"$expRoot/$dirName"
   def profEventLog(fileName: String): String = s"$profLogDir/$fileName"
 
-  private def verifyPhotonExecTopology(rows: Seq[Map[String, String]]): Unit = {
+  private def verifyPhotonExecTopology(
+      rows: Seq[Map[String, String]],
+      expectedRows: Int,
+      expectedClusters: Int,
+      expectedShuffleWrappers: Int,
+      expectedSources: Int,
+      expectedSinks: Int): Unit = {
     type NodeKey = (String, String)
 
     def nodeKey(row: Map[String, String]): NodeKey =
@@ -62,14 +68,20 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
     val sources = rows.filter(_("Expression Name") == "PhotonShuffleExchangeSource")
     val sinks = rows.filter(_("Expression Name") == "PhotonShuffleExchangeSink")
 
-    assert(rows.size == 297, s"expected 297 Photon exec rows, found ${rows.size}")
-    assert(rowsByNode.size == 297,
-      s"expected 297 unique Photon (SQL ID, SQL Node Id) keys, found ${rowsByNode.size}")
-    assert(clusters.size == 41, s"expected 41 Photon clusters, found ${clusters.size}")
-    assert(shuffleWrappers.size == 39,
-      s"expected 39 Photon shuffle wrappers, found ${shuffleWrappers.size}")
-    assert(sources.size == 39, s"expected 39 Photon shuffle sources, found ${sources.size}")
-    assert(sinks.size == 39, s"expected 39 Photon shuffle sinks, found ${sinks.size}")
+    assert(rows.size == expectedRows,
+      s"expected $expectedRows Photon exec rows, found ${rows.size}")
+    assert(rowsByNode.size == expectedRows,
+      s"expected $expectedRows unique Photon (SQL ID, SQL Node Id) keys, " +
+        s"found ${rowsByNode.size}")
+    assert(clusters.size == expectedClusters,
+      s"expected $expectedClusters Photon clusters, found ${clusters.size}")
+    assert(shuffleWrappers.size == expectedShuffleWrappers,
+      s"expected $expectedShuffleWrappers Photon shuffle wrappers, " +
+        s"found ${shuffleWrappers.size}")
+    assert(sources.size == expectedSources,
+      s"expected $expectedSources Photon shuffle sources, found ${sources.size}")
+    assert(sinks.size == expectedSinks,
+      s"expected $expectedSinks Photon shuffle sinks, found ${sinks.size}")
 
     val emptyClusters = clusters.filter(row => splitValues(row("Exec Children Node Ids")).isEmpty)
     assert(emptyClusters.isEmpty,
@@ -807,8 +819,57 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
         QToolOutFileCheckerImpl("Execs table content")
           .withTableLabel("execCSVReport")
           .withContentVisitor("Photon exec topology", csvContainer => {
-            verifyPhotonExecTopology(csvContainer.csvRows)
+            verifyPhotonExecTopology(csvContainer.csvRows, 297, 41, 39, 39, 39)
           })
+          .withExpectedLoc(expectedQualLoc(expectedLabel)))
+      .build()
+  }
+
+  test("support for Databricks 17.3 Photon eventlog") {
+    val logFiles = Array(qualEventLog("nds_q88_photon_db_17_3.zstd"))
+    val expectedLabel = "photon_db_17_3"
+
+    val app = createAppFromEventlog(logFiles.head, PlatformNames.DATABRICKS_AZURE)
+    assert(app.dbPlugin.isPhotonEnabled, "expected DBR 17.3 event log to enable Photon")
+    assert(app.sparkVersion == "17.3.x-photon-scala2.13",
+      s"unexpected DBR version: ${app.sparkVersion}")
+    assert(app.getTotalLines == 10360L,
+      s"unexpected DBR 17.3 event count: ${app.getTotalLines}")
+    assert(app.getProcessedLinesCount == 5386L,
+      s"unexpected DBR 17.3 parsed event count: ${app.getProcessedLinesCount}")
+    assert(app.getSkippedLinesCount == 4974L,
+      s"unexpected DBR 17.3 intentionally skipped event count: ${app.getSkippedLinesCount}")
+
+    QToolTestCtxtBuilder(eventlogs = logFiles)
+      .withPlatform(PlatformNames.DATABRICKS_AZURE)
+      .withPerSQL()
+      .withChecker(
+        QToolStatusChecker("1 SUCCESS, 0 FAILURE, 0 SKIPPED, 0 UNKNOWN")
+          .withExpectedCounts(StatusReportCounts(1, 0, 0, 0)))
+      .withChecker(
+        QToolOutFileCheckerImpl("DBR 17.3 core app summary")
+          .withExpectedRows("expect only 1 row", 1)
+          .withExpectedLoc(expectedQualLoc(expectedLabel)))
+      .withChecker(
+        QToolOutFileCheckerImpl("DBR 17.3 per-SQL content")
+          .withTableLabel("perSqlCSVReport")
+          .withExpectedLoc(expectedQualLoc(expectedLabel)))
+      .withChecker(
+        QToolOutFileCheckerImpl("DBR 17.3 exec content and Photon topology")
+          .withTableLabel("execCSVReport")
+          .withContentVisitor("all Photon operators map to OSS Spark", csvContainer => {
+            val unmappedPhotonRows = csvContainer.csvRows.filter { row =>
+              row("Expression Name").startsWith("Photon") &&
+                row("Exec Name").startsWith("Photon")
+            }
+            assert(unmappedPhotonRows.isEmpty,
+              s"found unmapped Photon operators: $unmappedPhotonRows")
+            verifyPhotonExecTopology(csvContainer.csvRows, 281, 38, 38, 30, 38)
+          })
+          .withExpectedLoc(expectedQualLoc(expectedLabel)))
+      .withChecker(
+        QToolOutFileCheckerImpl("DBR 17.3 stage content")
+          .withTableLabel("stagesCSVReport")
           .withExpectedLoc(expectedQualLoc(expectedLabel)))
       .build()
   }
