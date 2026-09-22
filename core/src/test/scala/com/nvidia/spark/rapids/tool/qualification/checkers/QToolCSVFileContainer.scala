@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, NVIDIA CORPORATION.
+ * Copyright (c) 2025-2026, NVIDIA CORPORATION.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -112,10 +112,18 @@ case class QToolCSVFileContainer private(
   }
 
   // Used to compare between actual and expected files.
-  def compareFileContent(expectedContainer: QToolCSVFileContainer): Unit = {
+  def compareFileContent(
+      expectedContainer: QToolCSVFileContainer,
+      sortColumns: Seq[String] = Seq.empty): Unit = {
     val expectedRows = expectedContainer.csvRows
     val actualRows = csvRows
-    actualRows shouldBe expectedRows
+    if (sortColumns.isEmpty) {
+      actualRows shouldBe expectedRows
+    } else {
+      def sortKey(row: Map[String, String]): String =
+        sortColumns.map(row).mkString("\u0000")
+      actualRows.sortBy(sortKey) shouldBe expectedRows.sortBy(sortKey)
+    }
   }
 
   // return the list of values in the given column

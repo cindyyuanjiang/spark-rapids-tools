@@ -22,7 +22,7 @@ import java.nio.file.{Files, Paths, StandardOpenOption}
 
 import scala.collection.mutable.ArrayBuffer
 
-import com.nvidia.spark.rapids.tool.{EventLogPathProcessor, PlatformNames, StatusReportCounts, ToolTestUtils}
+import com.nvidia.spark.rapids.tool.{EventLogPathProcessor, PlatformFactory, PlatformNames, StatusReportCounts, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.views.RawMetricProfilerView
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.io.IOUtils
@@ -149,6 +149,37 @@ class ApplicationInfoSuite extends AnyFunSuite with Logging {
 
     // assert attemptID
     assert(apps.head.attemptId == 1)
+  }
+
+  test("profile Databricks 17.3 RAPIDS GPU eventlog") {
+    val eventLog = s"$logDir/nds_q88_gpu_db_17_3.zstd"
+
+    TrampolineUtil.withTempDir { outputDir =>
+      val appArgs = new ProfileArgs(Array(
+        "--platform", PlatformNames.DATABRICKS_AZURE,
+        "--output-directory", outputDir.getAbsolutePath,
+        eventLog))
+      val (exit, _) = ProfileMain.mainInternal(appArgs)
+      assert(exit == 0)
+    }
+
+    val eventLogInfo = EventLogPathProcessor.getEventLogInfo(eventLog, hadoopConf)
+    assert(eventLogInfo.size == 1)
+    val app = new ApplicationInfo(
+      hadoopConf,
+      eventLogInfo.head._1,
+      PlatformFactory.createInstance(PlatformNames.DATABRICKS_AZURE))
+
+    assert(app.sparkVersion == "17.3.x-gpu-ml-scala2.13")
+    assert(app.gpuMode, "expected the RAPIDS plugin to be detected")
+    assert(!app.dbPlugin.isPhotonEnabled, "expected the GPU capture to use STANDARD runtime")
+    assert(app.getSparkRuntime == SparkRuntime.SPARK_RAPIDS)
+    assert(app.sparkRapidsBuildInfo.sparkRapidsBuildInfo.nonEmpty)
+    assert(app.getTotalLines == 7022L)
+    assert(app.getProcessedLinesCount == 3689L)
+    assert(app.getSkippedLinesCount == 3333L)
+    assert(app.sqlIdToInfo.size == 25)
+    assert(app.jobIdToInfo.size == 57)
   }
 
   test("test sql and resourceprofile eventlog") {

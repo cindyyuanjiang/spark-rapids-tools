@@ -16,6 +16,13 @@
 #   jq -c -f scripts/sanitize-databricks-17-3-eventlog.jq EVENTLOG \
 #     | zstd -19 -T0 -o nds_q88_photon_db_17_3.zstd
 #
+# Regenerate the DBR 17.3 qualification goldens from core/ with:
+#   mvn test \
+#     -Dsuites=com.nvidia.spark.rapids.tool.qualification.QualificationNoSparkSuite \
+#     -Dtools.qual.test.generate.golden.enable=true
+# Review the generated photon_db_17_3 files under golden-sets/357/qual before copying them to
+# src/test/resources/QualificationExpectations/photon_db_17_3.
+#
 # The filter retains every event so the fixture can detect event-parser drift. The synthetic
 # Databricks cluster tags are required because Databricks/Photon detection intentionally requires
 # clusterAllTags, clusterId, and clusterName in addition to the Photon runtime properties.
@@ -84,8 +91,14 @@ elif .Event == "SparkListenerExecutorAdded" then
   .["Executor Info"].Host = "executor.example.invalid"
   | .["Executor Info"]["Log Urls"] = {}
   | .["Executor Info"].Attributes = {}
-elif .Event == "SparkListenerBlockManagerAdded" then
+elif (.Event == "SparkListenerBlockManagerAdded"
+    or .Event == "SparkListenerBlockManagerRemoved") then
   .["Block Manager ID"].Host = "executor.example.invalid"
+elif .Event == "com.nvidia.spark.rapids.SparkRapidsBuildInfoEvent" then
+  .sparkRapidsBuildInfo.user = "test-user"
+  | .sparkRapidsJniBuildInfo.user = "test-user"
+  | .cudfBuildInfo.user = "test-user"
+  | .sparkRapidsPrivateBuildInfo.user = "test-user"
 elif .Event == "SparkListenerTaskEnd" then
   .["Task Info"].Host = "executor.example.invalid"
   # Spark replays TaskEnd accumulator updates from Update. Value repeats the final value, while
@@ -106,6 +119,7 @@ end
     or .Event == "SparkListenerStageCompleted"
     or .Event == "SparkListenerExecutorAdded"
     or .Event == "SparkListenerBlockManagerAdded"
+    or .Event == "com.nvidia.spark.rapids.SparkRapidsBuildInfoEvent"
     or .Event == "org.apache.spark.sql.execution.ui.SparkListenerSQLExecutionStart"
     or .Event == "org.apache.spark.sql.execution.ui.SparkListenerSQLAdaptiveExecutionUpdate"
   ) then sanitize_strings else . end

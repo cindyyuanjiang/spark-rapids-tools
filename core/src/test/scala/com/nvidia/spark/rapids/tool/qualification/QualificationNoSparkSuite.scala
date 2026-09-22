@@ -16,22 +16,26 @@
 
 package com.nvidia.spark.rapids.tool.qualification
 
+import java.io.FileInputStream
 import java.nio.file.{Files, Paths}
 import java.time.LocalDateTime
 
+import scala.collection.mutable
+
+import com.github.luben.zstd.ZstdInputStream
 import com.nvidia.spark.rapids.BaseNoSparkSuite
 import com.nvidia.spark.rapids.tool.{EventLogPathProcessor, PlatformNames, StatusReportCounts, ToolTestUtils}
 import com.nvidia.spark.rapids.tool.analysis.AppSQLPlanAnalyzer
 import com.nvidia.spark.rapids.tool.qualification.checkers.{QToolOutFileCheckerImpl, QToolOutJsonFileCheckerImpl, QToolResultCoreChecker, QToolStatusChecker, QToolTestCtxtBuilder}
 import com.nvidia.spark.rapids.tool.views.QualSQLCodeGenView
-import org.json4s.DefaultFormats
+import org.json4s.{DefaultFormats, JString}
 import org.json4s.jackson.JsonMethods
 import org.scalatest.matchers.should.Matchers._
 
 import org.apache.spark.sql.TrampolineUtil
 import org.apache.spark.sql.rapids.tool.{SourceClusterInfo, ToolUtils}
 import org.apache.spark.sql.rapids.tool.plangraph.SparkPlanGraphCluster
-import org.apache.spark.sql.rapids.tool.util.UTF8Source
+import org.apache.spark.sql.rapids.tool.util.{EventLogReaderConf, UTF8Source}
 
 
 /**
@@ -46,6 +50,24 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
   def qualEventLog(fileName: String): String = s"$qualLogDir/$fileName"
   def expectedQualLoc(dirName: String): String = s"$expRoot/$dirName"
   def profEventLog(fileName: String): String = s"$profLogDir/$fileName"
+
+  private def eventTypeCounts(compressedEventLog: String): Map[String, Long] = {
+    val counts = mutable.Map.empty[String, Long].withDefaultValue(0L)
+    val source = UTF8Source.fromInputStream(
+      new ZstdInputStream(new FileInputStream(compressedEventLog)))
+    try {
+      source.getLines().foreach { line =>
+        val eventType = JsonMethods.parse(line) \ "Event" match {
+          case JString(value) => value
+          case _ => fail("event-log line is missing its Event field")
+        }
+        counts.update(eventType, counts(eventType) + 1L)
+      }
+    } finally {
+      source.close()
+    }
+    counts.toMap
+  }
 
   private def verifyPhotonExecTopology(
       rows: Seq[Map[String, String]],
@@ -840,6 +862,45 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
     assert(app.getSkippedLinesCount == 4974L,
       s"unexpected DBR 17.3 intentionally skipped event count: ${app.getSkippedLinesCount}")
 
+    val expectedEventTypes = Map(
+      "SparkListenerApplicationStart" -> 1L,
+      "SparkListenerBlockManagerAdded" -> 9L,
+      "SparkListenerEnvironmentUpdate" -> 1L,
+      "SparkListenerExecutorAdded" -> 8L,
+      "SparkListenerJobEnd" -> 57L,
+      "SparkListenerJobStart" -> 57L,
+      "SparkListenerResourceProfileAdded" -> 1L,
+      "SparkListenerStageCompleted" -> 57L,
+      "SparkListenerStageSubmitted" -> 57L,
+      "SparkListenerTaskEnd" -> 4914L,
+      "SparkListenerTaskStart" -> 4914L,
+      "org.apache.spark.scheduler.NoOpEvent" -> 1L,
+      "org.apache.spark.scheduler.SparkListenerStageStatsReady" -> 57L,
+      "org.apache.spark.sql.connect.service.SparkListenerConnectServiceStarted" -> 1L,
+      "org.apache.spark.sql.execution.ui.SparkListenerDriverAccumUpdates" -> 156L,
+      "org.apache.spark.sql.execution.ui.SparkListenerSQLAdaptiveExecutionUpdate" -> 7L,
+      "org.apache.spark.sql.execution.ui.SparkListenerSQLAdaptiveSQLMetricUpdates" -> 11L,
+      "org.apache.spark.sql.execution.ui.SparkListenerSQLExecutionEnd" -> 25L,
+      "org.apache.spark.sql.execution.ui.SparkListenerSQLExecutionStart" -> 25L,
+      "DBCEventLoggingListenerMetadata" -> 1L)
+    val actualEventTypes = eventTypeCounts(logFiles.head)
+    assert(actualEventTypes == expectedEventTypes,
+      s"DBR 17.3 event-type drift: ${actualEventTypes.toSeq.sortBy(_._1)}")
+
+    val qualificationEvents =
+      EventLogReaderConf.conf.getSupportedEvents("QualificationAppInfo").toSet
+    val intentionallySkippedTypes = actualEventTypes.filterNot { case (eventType, _) =>
+      qualificationEvents.contains(eventType)
+    }
+    val expectedSkippedTypes = Map(
+      "SparkListenerTaskStart" -> 4914L,
+      "org.apache.spark.scheduler.SparkListenerStageStatsReady" -> 57L,
+      "org.apache.spark.sql.connect.service.SparkListenerConnectServiceStarted" -> 1L,
+      "org.apache.spark.scheduler.NoOpEvent" -> 1L,
+      "DBCEventLoggingListenerMetadata" -> 1L)
+    assert(intentionallySkippedTypes == expectedSkippedTypes,
+      s"unexpected DBR 17.3 skipped event types: $intentionallySkippedTypes")
+
     QToolTestCtxtBuilder(eventlogs = logFiles)
       .withPlatform(PlatformNames.DATABRICKS_AZURE)
       .withPerSQL()
@@ -870,6 +931,7 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
       .withChecker(
         QToolOutFileCheckerImpl("DBR 17.3 stage content")
           .withTableLabel("stagesCSVReport")
+          .withRowsSortedBy("Stage ID")
           .withExpectedLoc(expectedQualLoc(expectedLabel)))
       .build()
   }
