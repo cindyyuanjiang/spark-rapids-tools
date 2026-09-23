@@ -13,8 +13,14 @@
 # limitations under the License.
 #
 # Usage:
-#   jq -c -f scripts/sanitize-databricks-17-3-eventlog.jq EVENTLOG \
-#     | zstd -19 -T0 -o nds_q88_photon_db_17_3.zstd
+#   jq --arg fixture_id db173-q88-fixture -c \
+#     -f scripts/sanitize-databricks-eventlog.jq EVENTLOG \
+#     | zstd -19 -T0 -o SANITIZED_EVENTLOG.zstd
+#
+# This filter is shared by the DBR 17.3 Photon qualification fixture and the paired RAPIDS GPU
+# profiling fixture. It retains every event so the fixtures can detect event-parser drift.
+# Review every generated fixture for sensitive fields because future event types may require
+# additional sanitization rules.
 #
 # Regenerate the DBR 17.3 qualification goldens from core/ with:
 #   mvn test \
@@ -23,9 +29,8 @@
 # Review the generated photon_db_17_3 files under golden-sets/357/qual before copying them to
 # src/test/resources/QualificationExpectations/photon_db_17_3.
 #
-# The filter retains every event so the fixture can detect event-parser drift. The synthetic
-# Databricks cluster tags are required because Databricks/Photon detection intentionally requires
-# clusterAllTags, clusterId, and clusterName in addition to the Photon runtime properties.
+# The synthetic Databricks cluster tags are required because Databricks runtime detection uses
+# clusterAllTags, clusterId, and clusterName in addition to runtime-specific properties.
 
 def sanitize_string:
   gsub("/Workspace/Repos/\\.internal/[^ \\t\\r\\n\"]+"; "/Workspace/Repos/REDACTED")
@@ -63,11 +68,13 @@ def keep_spark_property:
 if .Event == "SparkListenerEnvironmentUpdate" then
   .["Spark Properties"] |= with_entries(select(.key | keep_spark_property))
   | .["Spark Properties"]["spark.databricks.clusterUsageTags.clusterAllTags"] =
-      "[{\"key\":\"Vendor\",\"value\":\"Databricks\"},{\"key\":\"ClusterName\",\"value\":\"db173-q88-fixture\"},{\"key\":\"ClusterId\",\"value\":\"db173-q88-fixture\"}]"
+      ([{"key":"Vendor","value":"Databricks"},
+        {"key":"ClusterName","value":$fixture_id},
+        {"key":"ClusterId","value":$fixture_id}] | tojson)
   | .["Spark Properties"]["spark.databricks.clusterUsageTags.clusterId"] =
-      "db173-q88-fixture"
+      $fixture_id
   | .["Spark Properties"]["spark.databricks.clusterUsageTags.clusterName"] =
-      "db173-q88-fixture"
+      $fixture_id
   | .["Hadoop Properties"] = {}
   | .["System Properties"] = {}
   | .["Classpath Entries"] = {}
@@ -76,7 +83,7 @@ elif .Event == "SparkListenerApplicationStart" then
 elif .Event == "org.apache.spark.sql.execution.ui.SparkListenerSQLExecutionStart" then
   .modifiedConfigs = {}
   | .jobTags = []
-  | .jobGroupId = "db173-q88-fixture"
+  | .jobGroupId = $fixture_id
   | .queryId = "00000000-0000-0000-0000-000000000000"
   | .details = ""
 elif .Event == "org.apache.spark.sql.execution.ui.SparkListenerSQLExecutionEnd" then

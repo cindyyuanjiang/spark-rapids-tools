@@ -278,7 +278,7 @@ class AppQualStagesTable(
     hadoopConf: Configuration) extends AppQualTable(tableMeta, rootDirectory, hadoopConf) {
   override def appendDataToWriter(fWriter: ToolTextFileWriter,
     rec: QualificationSummaryInfo): Unit = {
-    rec.stageInfo.foreach { sInfo =>
+    rec.stageInfo.sortBy(_.stageId).foreach { sInfo =>
       // scalastyle:off line.size.limit
       // P.S: Use raw because it offers better performance compared to sInterpolation.
       fWriter.writeLn(
