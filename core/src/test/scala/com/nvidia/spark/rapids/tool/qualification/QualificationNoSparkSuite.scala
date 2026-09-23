@@ -901,6 +901,14 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
     assert(intentionallySkippedTypes == expectedSkippedTypes,
       s"unexpected DBR 17.3 skipped event types: $intentionallySkippedTypes")
 
+    val perSqlChecker = QToolOutFileCheckerImpl("DBR 17.3 per-SQL content")
+      .withTableLabel("perSqlCSVReport")
+      .withExpectedLoc(expectedQualLoc(expectedLabel))
+    if (!ToolUtils.isSpark340OrLater()) {
+      // Spark versions before 3.4 do not expose the root execution ID.
+      perSqlChecker.withColumnsIgnored("Root SQL ID")
+    }
+
     QToolTestCtxtBuilder(eventlogs = logFiles)
       .withPlatform(PlatformNames.DATABRICKS_AZURE)
       .withPerSQL()
@@ -912,9 +920,7 @@ class QualificationNoSparkSuite extends BaseNoSparkSuite {
           .withExpectedRows("expect only 1 row", 1)
           .withExpectedLoc(expectedQualLoc(expectedLabel)))
       .withChecker(
-        QToolOutFileCheckerImpl("DBR 17.3 per-SQL content")
-          .withTableLabel("perSqlCSVReport")
-          .withExpectedLoc(expectedQualLoc(expectedLabel)))
+        perSqlChecker)
       .withChecker(
         QToolOutFileCheckerImpl("DBR 17.3 exec content and Photon topology")
           .withTableLabel("execCSVReport")

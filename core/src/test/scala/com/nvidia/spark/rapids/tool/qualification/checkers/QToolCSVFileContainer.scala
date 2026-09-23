@@ -114,9 +114,10 @@ case class QToolCSVFileContainer private(
   // Used to compare between actual and expected files.
   def compareFileContent(
       expectedContainer: QToolCSVFileContainer,
-      sortColumns: Seq[String] = Seq.empty): Unit = {
-    val expectedRows = expectedContainer.csvRows
-    val actualRows = csvRows
+      sortColumns: Seq[String] = Seq.empty,
+      ignoredColumns: Set[String] = Set.empty): Unit = {
+    val expectedRows = expectedContainer.csvRows.map(_ -- ignoredColumns)
+    val actualRows = csvRows.map(_ -- ignoredColumns)
     if (sortColumns.isEmpty) {
       actualRows shouldBe expectedRows
     } else {

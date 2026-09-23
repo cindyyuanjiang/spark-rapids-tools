@@ -48,6 +48,9 @@ abstract class QToolOutFileChecker
   // Optional columns used to canonicalize reports whose production order differs across Scala
   // collection implementations.
   var rowSortColumns: Seq[String] = Seq.empty
+  // Optional columns omitted from golden comparisons when an older Spark runtime cannot
+  // populate them.
+  var ignoredColumns: Set[String] = Set.empty
   // if true, there should be a check that no files are generated.
   // This typically needed to  test that certain configs or arguments would disable a specific file.
   var noFileGenerated: Boolean = false
@@ -113,6 +116,11 @@ abstract class QToolOutFileChecker
 
   def withRowsSortedBy(columns: String*): QToolOutFileChecker = {
     rowSortColumns = columns
+    this
+  }
+
+  def withColumnsIgnored(columns: String*): QToolOutFileChecker = {
+    ignoredColumns ++= columns
     this
   }
 
@@ -188,7 +196,8 @@ abstract class QToolOutFileChecker
       actualCSVContainers.foreach { case (cUUID, actualContainer) =>
         expectedContainers.get(cUUID) match {
           case Some(expectedContainer) =>
-            actualContainer.compareFileContent(expectedContainer, rowSortColumns)
+            actualContainer.compareFileContent(
+              expectedContainer, rowSortColumns, ignoredColumns)
           case None =>
             fail(s"Expected CSV with UUID $cUUID not found in expected paths.")
         }
