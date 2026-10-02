@@ -1711,6 +1711,38 @@ class SQLPlanParserSuite extends BasePlanParserSuite with Matchers {
     }
   }
 
+  test("DeltaLake Op AtomicCreateTableAsSelect and AtomicReplaceTableAsSelect") {
+    // scalastyle:off line.size.limit
+    // Databricks 17.3 writes the provider in upper case.
+    val createNodeName = "AtomicCreateTableAsSelect"
+    val createNodeDesc =
+      "AtomicCreateTableAsSelect [num_affected_rows#500L, num_inserted_rows#501L], com.databricks.sql.managedcatalog.UnityCatalogV2Proxy@bc65c8a, default.store_sales_clone, [identity(ss_sold_date_sk)], Project [ss_sold_time_sk#442, ss_item_sk#443, ss_sold_date_sk#464], TableSpec(Map(),Some(DELTA),Map(),Some(s3://bucket/store_sales_clone),None,None,None,false,false,Set(),None,None,None,None,List()), false"
+    val replaceNodeName = "AtomicReplaceTableAsSelect"
+    val replaceNodeDesc =
+      "AtomicReplaceTableAsSelect [num_affected_rows#1L, num_inserted_rows#2L], com.databricks.sql.managedcatalog.UnityCatalogV2Proxy@XXXXX, DB.VAR_2, Union false, false, TableSpec(Map(delta.autoOptimize.optimizeWrite -> true, owner -> (user)),Some(delta),Map(),None,None,None,false,Set(),None,None,None), [replaceWhere=VAR_1 IN ('WHATEVER')], true"
+    // scalastyle:on line.size.limit
+    Seq((createNodeName, createNodeDesc), (replaceNodeName, replaceNodeDesc)).foreach {
+      case (nodeName, nodeDesc) =>
+        testDeltaLakeOperator(nodeName, nodeDesc) { execInfo =>
+          execInfo.exec shouldEqual nodeName
+          execInfo.isSupported shouldBe true
+          execInfo.expr shouldEqual "Format: Delta"
+        }
+    }
+
+    // The provider decides the format even when "delta" appears elsewhere in the description.
+    Seq("None", "Some(parquet)").foreach { provider =>
+      val nodeDesc = createNodeDesc
+        .replace("default.store_sales_clone", "default.delta_store_sales")
+        .replace("Some(DELTA)", provider)
+      testDeltaLakeOperator(createNodeName, nodeDesc) { execInfo =>
+        execInfo.exec shouldEqual s"$createNodeName unknown"
+        execInfo.isSupported shouldBe false
+        execInfo.expr shouldEqual "Format: unknown"
+      }
+    }
+  }
+
   test("BloomFilters are supported") {
     // BloomFilter was added in Spark 3.3.0, but we do not care about the version here because
     // we use one parser to rule all spark-versions.

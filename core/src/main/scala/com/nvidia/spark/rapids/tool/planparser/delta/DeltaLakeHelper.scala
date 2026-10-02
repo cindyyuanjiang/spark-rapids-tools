@@ -117,6 +117,25 @@ object DeltaLakeHelper extends PropConditionOnSparkExtTrait
     // The following entries are for open source DeltaLake
     "DeltaTableV2")
 
+  // Matches the provider in a TableSpec, which is the argument after the properties Map:
+  // TableSpec(Map(),Some(delta),...) or TableSpec(Map(),None,...).
+  private val tableSpecProviderRegex =
+    """TableSpec\(Map\((?:[^()]|\([^()]*\))*\),\s*(Some\([^)]*\)|None)""".r
+
+  /**
+   * Checks whether the TableSpec in an AtomicCreateTableAsSelect or AtomicReplaceTableAsSelect
+   * description has the Delta provider. The provider case depends on the runtime, for example
+   * Some(delta) or Some(DELTA) on Databricks 17.3. A description without a TableSpec falls back to
+   * looking for "delta" anywhere in the description.
+   */
+  def isDeltaTableProvider(nodeDesc: String): Boolean = {
+    // The query plan argument comes before the TableSpec, so use the last match.
+    tableSpecProviderRegex.findAllMatchIn(nodeDesc).toSeq.lastOption match {
+      case Some(m) => m.group(1).equalsIgnoreCase("Some(delta)")
+      case None => nodeDesc.contains("delta")
+    }
+  }
+
   def acceptsExclusiveWriteOp(nodeName: String): Boolean = {
     DeltaLakeOps.isExclusiveDeltaWriteOp(nodeName)
   }
@@ -138,7 +157,6 @@ object DeltaLakeHelper extends PropConditionOnSparkExtTrait
         // To decide whether they are supported or not, we need to check whether the TableSpec
         // second argument is "delta" provider. The sample below shows a table Spec with
         // Delta Provider. If the argument is none, we assume the provider is not Delta.
-        // For simplicity, we will match regex on "*delta*".
         //
         // AtomicReplaceTableAsSelectExec has a different format
         // AtomicReplaceTableAsSelect [num_affected_rows#ID_0L, num_inserted_rows#ID_1L],
@@ -148,7 +166,7 @@ object DeltaLakeHelper extends PropConditionOnSparkExtTrait
         // [replaceWhere=VAR_1 IN ('WHATEVER')], true,
         // org.apache.spark.sql.execution.datasources.
         // v2.DataSourceV2Strategy$$Lambda$XXXXX
-        node.desc.contains("delta")
+        isDeltaTableProvider(node.desc)
       } else {
         false
       }
