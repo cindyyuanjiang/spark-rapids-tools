@@ -1721,11 +1721,19 @@ class SQLPlanParserSuite extends BasePlanParserSuite with Matchers {
     val replaceNodeDesc =
       "AtomicReplaceTableAsSelect [num_affected_rows#1L, num_inserted_rows#2L], com.databricks.sql.managedcatalog.UnityCatalogV2Proxy@XXXXX, DB.VAR_2, Union false, false, TableSpec(Map(delta.autoOptimize.optimizeWrite -> true, owner -> (user)),Some(delta),Map(),None,None,None,false,Set(),None,None,None), [replaceWhere=VAR_1 IN ('WHATEVER')], true"
     // scalastyle:on line.size.limit
-    // Property values can nest parentheses at any depth.
-    val nestedPropsDesc =
-      createNodeDesc.replace("TableSpec(Map()", "TableSpec(Map(owner -> ((user)))")
-    Seq((createNodeName, createNodeDesc), (replaceNodeName, replaceNodeDesc),
-        (createNodeName, nestedPropsDesc)).foreach {
+    // Property values are printed without quotes, so their parentheses can nest at any depth or be
+    // unbalanced, and Scala 2.13 prints a Map with more than four entries as HashMap.
+    def withProperties(props: String): String =
+      createNodeDesc.replace("TableSpec(Map()", s"TableSpec($props")
+    val createNodeDescs = Seq(
+      createNodeDesc,
+      withProperties("Map(owner -> ((user)))"),
+      withProperties("Map(comment -> price (USD)"),
+      withProperties("Map(comment -> hello))"),
+      withProperties("HashMap(k1 -> v1, k2 -> v2, k3 -> v3, k4 -> v4, k5 -> v5)"),
+      // A later argument can contain "TableSpec(".
+      createNodeDesc.replace("s3://bucket/store_sales_clone", "s3://bucket/TableSpec(foo)"))
+    (createNodeDescs.map((createNodeName, _)) :+ ((replaceNodeName, replaceNodeDesc))).foreach {
       case (nodeName, nodeDesc) =>
         testDeltaLakeOperator(nodeName, nodeDesc) { execInfo =>
           execInfo.exec shouldEqual nodeName
