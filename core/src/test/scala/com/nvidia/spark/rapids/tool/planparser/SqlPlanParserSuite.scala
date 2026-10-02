@@ -1721,7 +1721,11 @@ class SQLPlanParserSuite extends BasePlanParserSuite with Matchers {
     val replaceNodeDesc =
       "AtomicReplaceTableAsSelect [num_affected_rows#1L, num_inserted_rows#2L], com.databricks.sql.managedcatalog.UnityCatalogV2Proxy@XXXXX, DB.VAR_2, Union false, false, TableSpec(Map(delta.autoOptimize.optimizeWrite -> true, owner -> (user)),Some(delta),Map(),None,None,None,false,Set(),None,None,None), [replaceWhere=VAR_1 IN ('WHATEVER')], true"
     // scalastyle:on line.size.limit
-    Seq((createNodeName, createNodeDesc), (replaceNodeName, replaceNodeDesc)).foreach {
+    // Property values can nest parentheses at any depth.
+    val nestedPropsDesc =
+      createNodeDesc.replace("TableSpec(Map()", "TableSpec(Map(owner -> ((user)))")
+    Seq((createNodeName, createNodeDesc), (replaceNodeName, replaceNodeDesc),
+        (createNodeName, nestedPropsDesc)).foreach {
       case (nodeName, nodeDesc) =>
         testDeltaLakeOperator(nodeName, nodeDesc) { execInfo =>
           execInfo.exec shouldEqual nodeName
@@ -1730,11 +1734,18 @@ class SQLPlanParserSuite extends BasePlanParserSuite with Matchers {
         }
     }
 
-    // The provider decides the format even when "delta" appears elsewhere in the description.
-    Seq("None", "Some(parquet)").foreach { provider =>
-      val nodeDesc = createNodeDesc
-        .replace("default.store_sales_clone", "default.delta_store_sales")
-        .replace("Some(DELTA)", provider)
+    // The provider decides the format even when "delta" appears elsewhere in the description,
+    // and a TableSpec whose provider cannot be read is not Delta.
+    val deltaNameDesc =
+      createNodeDesc.replace("default.store_sales_clone", "default.delta_store_sales")
+    Seq(
+      deltaNameDesc.replace("Some(DELTA)", "None"),
+      deltaNameDesc.replace("Some(DELTA)", "Some(parquet)"),
+      deltaNameDesc.replace("TableSpec(Map(),Some(DELTA)",
+        "TableSpec(Map(comment -> nested(foo(bar))),Some(parquet)"),
+      deltaNameDesc.substring(0, deltaNameDesc.indexOf("TableSpec(")) +
+        "TableSpec(Map(comment -> (cut off"
+    ).foreach { nodeDesc =>
       testDeltaLakeOperator(createNodeName, nodeDesc) { execInfo =>
         execInfo.exec shouldEqual s"$createNodeName unknown"
         execInfo.isSupported shouldBe false

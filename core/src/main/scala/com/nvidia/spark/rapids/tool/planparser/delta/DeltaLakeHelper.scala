@@ -16,6 +16,7 @@
 
 package com.nvidia.spark.rapids.tool.planparser.delta
 
+import scala.annotation.tailrec
 import scala.util.matching.Regex
 
 import com.nvidia.spark.rapids.tool.planparser.{DataWritingCmdWrapper, DataWritingCommandExecParser, ExecInfo, ExecParser, GenericExecParser, ReadParser}
@@ -117,22 +118,43 @@ object DeltaLakeHelper extends PropConditionOnSparkExtTrait
     // The following entries are for open source DeltaLake
     "DeltaTableV2")
 
-  // Matches the provider in a TableSpec, which is the argument after the properties Map:
-  // TableSpec(Map(),Some(delta),...) or TableSpec(Map(),None,...).
-  private val tableSpecProviderRegex =
-    """TableSpec\(Map\((?:[^()]|\([^()]*\))*\),\s*(Some\([^)]*\)|None)""".r
+  private val tableSpecPrefix = "TableSpec("
+  // Matches the TableSpec provider, the argument after the properties Map, at the comma that ends
+  // the Map: ",Some(delta)" or ",None".
+  private val tableSpecProviderRegex = """,\s*(Some\([^)]*\)|None)""".r
 
   /**
    * Checks whether the TableSpec in an AtomicCreateTableAsSelect or AtomicReplaceTableAsSelect
    * description has the Delta provider. The provider case depends on the runtime, for example
-   * Some(delta) or Some(DELTA) on Databricks 17.3. A description without a TableSpec falls back to
-   * looking for "delta" anywhere in the description.
+   * Some(delta) or Some(DELTA) on Databricks 17.3. A TableSpec whose provider cannot be read is
+   * not Delta. A description without a TableSpec falls back to looking for "delta" anywhere in
+   * the description.
    */
   def isDeltaTableProvider(nodeDesc: String): Boolean = {
-    // The query plan argument comes before the TableSpec, so use the last match.
-    tableSpecProviderRegex.findAllMatchIn(nodeDesc).toSeq.lastOption match {
-      case Some(m) => m.group(1).equalsIgnoreCase("Some(delta)")
-      case None => nodeDesc.contains("delta")
+    // The query plan argument comes before the TableSpec, so use the last one.
+    val tableSpecStart = nodeDesc.lastIndexOf(tableSpecPrefix)
+    if (tableSpecStart < 0) {
+      nodeDesc.contains("delta")
+    } else {
+      endOfArgument(nodeDesc, tableSpecStart + tableSpecPrefix.length)
+        .flatMap(end => tableSpecProviderRegex.findPrefixMatchOf(nodeDesc.substring(end)))
+        .exists(_.group(1).equalsIgnoreCase("Some(delta)"))
+    }
+  }
+
+  // Returns the index of the comma that ends the argument starting at index i, skipping commas
+  // inside parentheses at any depth, or None if the arguments end or the description is cut off.
+  @tailrec
+  private def endOfArgument(desc: String, i: Int, depth: Int = 0): Option[Int] = {
+    if (i >= desc.length || depth < 0) {
+      None
+    } else {
+      desc.charAt(i) match {
+        case ',' if depth == 0 => Some(i)
+        case '(' => endOfArgument(desc, i + 1, depth + 1)
+        case ')' => endOfArgument(desc, i + 1, depth - 1)
+        case _ => endOfArgument(desc, i + 1, depth)
+      }
     }
   }
 
