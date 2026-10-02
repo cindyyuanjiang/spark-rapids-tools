@@ -117,13 +117,10 @@ object DeltaLakeHelper extends PropConditionOnSparkExtTrait
     // The following entries are for open source DeltaLake
     "DeltaTableV2")
 
-  // Matches the TableSpec provider by the arguments around it, the properties Map before and the
-  // options Map after: TableSpec(Map(...),Some(delta),Map(...),...). Property values are printed
-  // without quotes and can contain unbalanced parentheses, so the properties are matched lazily up
-  // to the first ")," followed by a provider and the options Map. Scala 2.13 prints a Map with more
-  // than four entries as HashMap(...).
-  private val tableSpecProviderRegex =
-    """(?s)TableSpec\(\w*Map\(.*?\),\s*(Some\([^()]*\)|None),\s*\w*Map\(""".r
+  // Matches a TableSpec provider by the arguments around it, the end of the properties Map before
+  // and the options Map after: TableSpec(Map(...),Some(delta),Map(...),...). Scala 2.13 prints a
+  // Map with more than four entries as HashMap(...).
+  private val tableSpecProviderRegex = """\),\s*(Some\([^()]*\)|None),\s*\w*Map\(""".r
 
   /**
    * Checks whether the TableSpec in an AtomicCreateTableAsSelect or AtomicReplaceTableAsSelect
@@ -133,11 +130,15 @@ object DeltaLakeHelper extends PropConditionOnSparkExtTrait
    * the description.
    */
   def isDeltaTableProvider(nodeDesc: String): Boolean = {
-    if (nodeDesc.contains("TableSpec(")) {
-      tableSpecProviderRegex.findFirstMatchIn(nodeDesc)
-        .exists(_.group(1).equalsIgnoreCase("Some(delta)"))
-    } else {
+    val tableSpecStart = nodeDesc.indexOf("TableSpec(")
+    if (tableSpecStart < 0) {
       nodeDesc.contains("delta")
+    } else {
+      // Query literals and property values are printed without quotes, so they can contain
+      // unbalanced parentheses or provider-shaped text. Both come before the target provider, so
+      // use the last match.
+      tableSpecProviderRegex.findAllMatchIn(nodeDesc.substring(tableSpecStart)).toSeq.lastOption
+        .exists(_.group(1).equalsIgnoreCase("Some(delta)"))
     }
   }
 

@@ -1725,12 +1725,17 @@ class SQLPlanParserSuite extends BasePlanParserSuite with Matchers {
     // unbalanced, and Scala 2.13 prints a Map with more than four entries as HashMap.
     def withProperties(props: String): String =
       createNodeDesc.replace("TableSpec(Map()", s"TableSpec($props")
+    // The query plan comes before the target TableSpec and can contain a TableSpec-shaped literal.
+    def withQueryLiteral(desc: String, literal: String): String =
+      desc.replace("Project [", s"Project [$literal AS note#1, ")
     val createNodeDescs = Seq(
       createNodeDesc,
       withProperties("Map(owner -> ((user)))"),
       withProperties("Map(comment -> price (USD)"),
       withProperties("Map(comment -> hello))"),
       withProperties("HashMap(k1 -> v1, k2 -> v2, k3 -> v3, k4 -> v4, k5 -> v5)"),
+      withProperties("Map(comment -> TableSpec(Map(),Some(parquet),Map()))"),
+      withQueryLiteral(createNodeDesc, "TableSpec(Map(),Some(parquet),Map())"),
       // A later argument can contain "TableSpec(".
       createNodeDesc.replace("s3://bucket/store_sales_clone", "s3://bucket/TableSpec(foo)"))
     (createNodeDescs.map((createNodeName, _)) :+ ((replaceNodeName, replaceNodeDesc))).foreach {
@@ -1751,6 +1756,10 @@ class SQLPlanParserSuite extends BasePlanParserSuite with Matchers {
       deltaNameDesc.replace("Some(DELTA)", "Some(parquet)"),
       deltaNameDesc.replace("TableSpec(Map(),Some(DELTA)",
         "TableSpec(Map(comment -> nested(foo(bar))),Some(parquet)"),
+      deltaNameDesc.replace("TableSpec(Map(),Some(DELTA)",
+        "TableSpec(Map(comment -> TableSpec(Map(),Some(delta),Map())),Some(parquet)"),
+      withQueryLiteral(deltaNameDesc.replace("Some(DELTA)", "Some(parquet)"),
+        "TableSpec(Map(),Some(delta),Map())"),
       deltaNameDesc.substring(0, deltaNameDesc.indexOf("TableSpec(")) +
         "TableSpec(Map(comment -> (cut off"
     ).foreach { nodeDesc =>
